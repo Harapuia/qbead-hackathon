@@ -6,7 +6,7 @@
 #include <bluefruit.h>          // from board setup
 
 // default configs
-#define QB_LEDPIN 10
+#define QB_LEDPIN 0
 #define QB_PIXELCONFIG NEO_BRG + NEO_KHZ800
 #define QB_NSECTIONS 6
 #define QB_NLEGS 12
@@ -14,10 +14,9 @@
 #define QB_IX 0
 #define QB_IY 2
 #define QB_IZ 1
-#define QB_SX 1
+#define QB_SX 0
 #define QB_SY 0
-#define QB_SZ 0
-
+#define QB_SZ 1
 
 #define QB_MAX_PRPH_CONNECTION 2
 
@@ -143,8 +142,29 @@ public:
   float x,y,z,rx,ry,rz; // filtered and raw acc, in units of g
   float t,p; // theta and phi according to gravity
   float t_imu; // last update from the IMU
-  int shake = 0;
-  float shake_time;
+  float Theta;
+  float thetx,thety,thetz; //these are the angular rotations of the axes ( for gyroscope)
+  float coord[3] = {1.0,0.0,0.0};
+
+
+
+  float wbuffer[3];
+  float wx,wy,wz; //Angular velocities around each axis
+  float wTot; //total angular velocity
+  float Wtotbuffer[3];//container for normal vector for angular velocity
+
+
+
+  
+
+  float* GyroRot(float* Normal, float Theta, float* coord)//return type- address of integer array
+  {
+    static float a[3]; //array declared as static
+    a[0]= (cos(Theta)+Normal[0]*Normal[0]*(1-cos(Theta)))*coord[0] + (Normal[0]*Normal[1]*(1-cos(Theta))-Normal[2]*sin(Theta))*coord[1] + (Normal[0]*Normal[2]*(1-cos(Theta))+Normal[1]*sin(Theta))*coord[2];
+    a[1]= (Normal[1]*Normal[0]*(1-cos(Theta)+Normal[2]*sin(Theta)))*coord[0] + (cos(Theta)+Normal[1]*Normal[1]*(1-cos(Theta)))*coord[1] + (Normal[1]*Normal[2]*(1-cos(Theta))-Normal[0]*sin(Theta))*coord[2];
+    a[2]= (Normal[2]*Normal[0]*(1-cos(Theta))-Normal[1]*sin(Theta))*coord[0] + (Normal[2]*Normal[1]*(1-cos(Theta))+Normal[0]*sin(Theta))*coord[1] + (cos(Theta)+Normal[2]*Normal[2]*(1-cos(Theta)))*coord[2]; 
+    return a; //address of a returned
+  }
 
   void begin() {
     Serial.begin(9600);
@@ -263,15 +283,15 @@ public:
     rx = (1-2*sx)*rbuffer[ix];
     ry = (1-2*sy)*rbuffer[iy];
     rz = (1-2*sz)*rbuffer[iz];
-    
+
+
+
+
+
+
     float t_new = micros();
     float delta = t_new - t_imu;
     t_imu = t_new;
-    if (rx*rx+ry*ry+rz*rz>5 && t_new-shake_time>5000000) {
-      shake = (shake+1)%3;
-      shake_time = t_new;
-    }
-
     const float T = 100000; // 100 ms // TODO make the filter timeconstant configurable
     if (delta > 100000) {
       x = rx;
@@ -284,21 +304,38 @@ public:
       z = d*rz+(1-d)*z;
     }
 
-    if (shake==0) {
-      t = theta(x, y, z)*180/3.14159;
-      p = phi(x, y, z)*180/3.14159;
-    } else if (shake==2) {
-      int randNumber = random(1000);
-      if (randNumber<cos(t/2)*cos(t/2)*1000) {
-        t = 0;
-      } else {
-        t = 180;
-      }
-      
-    }
+    wbuffer[0]=imu.readFloatGyroX(); //angular velocity around X
+    wbuffer[1]=imu.readFloatGyroY(); //angular velocity around y
+    wbuffer[2]=imu.readFloatGyroZ(); //angular velocity around z
+
+    wTot=sqrt(wbuffer[0]*wbuffer[0]+wbuffer[1]*wbuffer[1]+wbuffer[2]*wbuffer[2]);
+    
+
+    Wtotbuffer[0]=wbuffer[0]/wTot;
+    Wtotbuffer[1]=wbuffer[1]/wTot;
+    Wtotbuffer[2]=wbuffer[2]/wTot;
+
+    Theta=wTot*delta; // total rotation in the time step 
+
+    // float arr[3][3] = {
+		// {cos(Theta)+Wtotbuffer[0]*Wtotbuffer[0]*(1-cos(Theta)), Wtotbuffer[0]*Wtotbuffer[1]*(1-cos(Theta))-Wtotbuffer[2]*sin(Theta), Wtotbuffer[0]*Wtotbuffer[2]*(1-cos(Theta))+Wtotbuffer[1]*sin(Theta) },
+		// {Wtotbuffer[1]*Wtotbuffer[1]*(1-cos(Theta)+Wtotbuffer[2]*sin(Theta)), cos(Theta)+Wtotbuffer[1]*Wtotbuffer[1]*(1-cos(Theta)),Wtotbuffer[1]*Wtotbuffer[2]*(1-cos(Theta))-Wtotbuffer[0]*sin(Theta)},
+		// { Wtotbuffer[2]*Wtotbuffer[0]*(1-cos(Theta))-Wtotbuffer[1]*sin(Theta), Wtotbuffer[2]*Wtotbuffer[1]*(1-cos(Theta))+Wtotbuffer[0]*sin(Theta),cos(Theta)+Wtotbuffer[2]*Wtotbuffer[2]*(1-cos(Theta)) },
+		// } ;
+    float a[3];
+    a = GyroRot(Wtotbuffer,-Theta,coord);
+    coord[0] = a[0];
+    coord[1] = a[1];
+    coord[2] = a[2];
+
+
+
+
+
+    t = theta(x, y, z)*180/3.14159;
+    p = phi(x, y, z)*180/3.14159;
     if (p<0) {p+=360;}// to bring it to [0,360] range
-    int randNumber = random(1000);
-    Serial.print(randNumber);
+
     Serial.print(x);
     Serial.print("\t");
     Serial.print(y);
@@ -379,7 +416,6 @@ void setup() {
     }
   }
   Serial.println("3");
-  randomSeed(2024);
 }
 
 void loop() {
@@ -387,9 +423,25 @@ void loop() {
 
   bead.clear();
   
+
+  // X axis
+
+  bead.setBloch_deg_smooth(90, 0, color(255,255,255));
+
+  //Y axis
+  bead.setBloch_deg_smooth(90, 90, color(255,255,255));
+
+  //Z axis
   bead.setBloch_deg_smooth(0, 0, color(255,255,255));
-  bead.setBloch_deg_smooth(180, 0, color(255,255,255));
+
+
+  // DOt
   bead.setBloch_deg_smooth(bead.t, bead.p, color(255,0,255));
+
+  //Lock vector
+  bead.setBloch_deg_smooth(theta(bead.coord[0],bead.coord[1],bead.coord[2]), phi(bead.coord[0],bead.coord[1],bead.coord[2]), color(255,0,255));
+
+
   bead.show();
   delay(10);
 }
