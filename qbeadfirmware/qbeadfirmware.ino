@@ -6,7 +6,7 @@
 #include <bluefruit.h>          // from board setup
 
 // default configs
-#define QB_LEDPIN 0
+#define QB_LEDPIN 10
 #define QB_PIXELCONFIG NEO_BRG + NEO_KHZ800
 #define QB_NSECTIONS 6
 #define QB_NLEGS 12
@@ -14,9 +14,10 @@
 #define QB_IX 0
 #define QB_IY 2
 #define QB_IZ 1
-#define QB_SX 0
+#define QB_SX 1
 #define QB_SY 0
-#define QB_SZ 1
+#define QB_SZ 0
+
 
 #define QB_MAX_PRPH_CONNECTION 2
 
@@ -142,6 +143,8 @@ public:
   float x,y,z,rx,ry,rz; // filtered and raw acc, in units of g
   float t,p; // theta and phi according to gravity
   float t_imu; // last update from the IMU
+  int shake = 0;
+  float shake_time;
 
   void begin() {
     Serial.begin(9600);
@@ -264,6 +267,11 @@ public:
     float t_new = micros();
     float delta = t_new - t_imu;
     t_imu = t_new;
+    if (rx*rx+ry*ry+rz*rz>5 && t_new-shake_time>5000000) {
+      shake = (shake+1)%3;
+      shake_time = t_new;
+    }
+
     const float T = 100000; // 100 ms // TODO make the filter timeconstant configurable
     if (delta > 100000) {
       x = rx;
@@ -276,10 +284,21 @@ public:
       z = d*rz+(1-d)*z;
     }
 
-    t = theta(x, y, z)*180/3.14159;
-    p = phi(x, y, z)*180/3.14159;
+    if (shake==0) {
+      t = theta(x, y, z)*180/3.14159;
+      p = phi(x, y, z)*180/3.14159;
+    } else if (shake==2) {
+      int randNumber = random(1000);
+      if (randNumber<cos(t/2)*cos(t/2)*1000) {
+        t = 0;
+      } else {
+        t = 180;
+      }
+      
+    }
     if (p<0) {p+=360;}// to bring it to [0,360] range
-
+    int randNumber = random(1000);
+    Serial.print(randNumber);
     Serial.print(x);
     Serial.print("\t");
     Serial.print(y);
@@ -360,12 +379,16 @@ void setup() {
     }
   }
   Serial.println("3");
+  randomSeed(2024);
 }
 
 void loop() {
   bead.readIMU();
 
   bead.clear();
+  
+  bead.setBloch_deg_smooth(0, 0, color(255,255,255));
+  bead.setBloch_deg_smooth(180, 0, color(255,255,255));
   bead.setBloch_deg_smooth(bead.t, bead.p, color(255,0,255));
   bead.show();
   delay(10);
